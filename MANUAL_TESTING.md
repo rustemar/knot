@@ -333,6 +333,77 @@ On Monadscan confirm, in order: flash transfer, Aave `Supply`, aUSDC mint, Aave
 `Withdraw`, aUSDC burn, premium funding, and repayment. No aUSDC transfer should
 remain at the Executor.
 
+### Deleverage drill — repay
+
+Requires a live same-asset position first: from the wallet directly, supply a
+small USDC amount and borrow variable-rate USDC against it. Read the debt and
+set the flash size to cover it:
+
+```bash
+export VDEBT_USDC=$(cast call "$DATA_PROVIDER" \
+  "getReserveTokensAddresses(address)(address,address,address)" "$USDC" \
+  --rpc-url "$RPC_URL" | sed -n 3p)
+export DEBT=$(cast call "$VDEBT_USDC" \
+  "balanceOf(address)(uint256)" "$WALLET" --rpc-url "$RPC_URL")
+export BORROW=$DEBT
+export PREMIUM=$(( (BORROW * PREMIUM_BPS + 5000) / 10000 ))
+export COLLATERAL_IN=$(cast call "$AUSDC" \
+  "balanceOf(address)(uint256)" "$WALLET" --rpc-url "$RPC_URL")
+```
+
+Approve the Executor for the premium plus the collateral the repay frees
+(aUSDC moves by `transferFrom`, so it needs its own allowance):
+
+```bash
+cast send "$USDC" "approve(address,uint256)" "$EXECUTOR" "$PREMIUM" \
+  --rpc-url "$RPC_URL" --account "$DEPLOYER_ACCOUNT"
+cast send "$AUSDC" "approve(address,uint256)" "$EXECUTOR" "$COLLATERAL_IN" \
+  --rpc-url "$RPC_URL" --account "$DEPLOYER_ACCOUNT"
+```
+
+Repay runs first: the aToken revalidates the sender's health factor on every
+transfer, so the collateral can only move after the debt is cleared.
+
+```bash
+export REPAY_DATA=$(cast calldata \
+  "repay(address,uint256)" "$USDC" "$MAX_UINT")
+export PULL_DATA=$(cast calldata \
+  "addFunds(address,uint256)" "$AUSDC" "$COLLATERAL_IN")
+export WITHDRAW_DATA=$(cast calldata \
+  "withdraw(address,uint256)" "$USDC" "$MAX_UINT")
+export FUND_DATA=$(cast calldata \
+  "addFunds(address,uint256)" "$USDC" "$PREMIUM")
+export FLASH_DATA=$(cast calldata \
+  "flashLoan(address,uint256,address[],bytes[])" \
+  "$USDC" "$BORROW" "[$AAVE,$FUNDS,$AAVE,$FUNDS]" \
+  "[$REPAY_DATA,$PULL_DATA,$WITHDRAW_DATA,$FUND_DATA]")
+```
+
+Simulate, then send the exact same call:
+
+```bash
+cast call "$EXECUTOR" \
+  "execute(address[],bytes[])" "[$FLASH]" "[$FLASH_DATA]" \
+  --from "$WALLET" --rpc-url "$RPC_URL"
+cast send "$EXECUTOR" \
+  "execute(address[],bytes[])" "[$FLASH]" "[$FLASH_DATA]" \
+  --rpc-url "$RPC_URL" --account "$DEPLOYER_ACCOUNT"
+```
+
+Expected: wallet variable debt is zero; wallet aUSDC is zero; wallet USDC ends
+at collateral minus debt minus `$PREMIUM` (the freed collateral settles the
+flash loan and the surplus is swept home); Executor USDC, aUSDC, and MON are
+zero; both allowances are zero.
+
+```bash
+cast call "$VDEBT_USDC" "balanceOf(address)(uint256)" "$WALLET" --rpc-url "$RPC_URL"
+cast call "$AUSDC" "balanceOf(address)(uint256)" "$WALLET" --rpc-url "$RPC_URL"
+cast call "$USDC" "balanceOf(address)(uint256)" "$EXECUTOR" --rpc-url "$RPC_URL"
+```
+
+On Monadscan confirm, in order: flash transfer, Aave `Repay`, variable-debt
+burn, aUSDC pull, Aave `Withdraw`, aUSDC burn, premium funding, and repayment.
+
 ## 5. Two-hop swap — Uniswap V3 testing mode
 
 The frontend fixes swaps to Uniswap V3 `SwapRouter02` and obtains quotes from
