@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   CircleDollarSign,
-  ExternalLink,
   LoaderCircle,
   LockKeyhole,
   Plus,
@@ -40,6 +39,7 @@ import { abis, deployments as generatedDeployments } from "@/generated/contracts
 import { cubeManifests, cubesById } from "@/cubes";
 import { encodeCombo } from "@/lib/encoding";
 import { explainSimulationError } from "@/lib/errors";
+import { comboReceiptState } from "@/lib/receipt";
 import {
   encodeUniswapExactInputSingle,
   minimumOutput,
@@ -48,6 +48,7 @@ import {
   uniswapQuoterV2Abi,
 } from "@/lib/uniswap";
 import type { CubeInstance, DeploymentAddresses } from "@/lib/types";
+import { ComboActionStatus } from "./ComboActionStatus";
 
 const erc20Abi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
@@ -424,13 +425,31 @@ export default function BuilderPage() {
     hash: transactionHash,
     chainId: 143,
     pollingInterval: 250,
-    query: { enabled: Boolean(transactionHash) },
+    // Without these the read inherits retry: 2 from the query client and
+    // viem's 180 s default, so a lookup that is going to fail takes about nine
+    // minutes to say so, and the retry below would take as long again.
+    timeout: 30_000,
+    query: { enabled: Boolean(transactionHash), retry: false },
+  });
+  const receiptState = comboReceiptState({
+    hash: transactionHash,
+    isSuccess: receipt.isSuccess,
+    isError: receipt.isError,
+    errorUpdateCount: receipt.errorUpdateCount,
   });
 
   useEffect(() => {
-    if (!receipt.isSuccess) return;
+    if (receiptState.kind !== "confirmed" && receiptState.kind !== "lookupFailed") return;
 
     setPhase("idle");
+
+    // A failed lookup leaves confirmation unknown, so the hash has to survive:
+    // no balance refetch to imply the combo landed, and none of the automatic
+    // reset that follows a confirmation, which would take away the explorer
+    // link that is now the only way to find out. Clearing it stays a choice
+    // the reader makes.
+    if (receiptState.kind === "lookupFailed") return;
+
     void walletBalanceRead.refetch();
     void allowanceRead.refetch();
 
@@ -439,7 +458,7 @@ export default function BuilderPage() {
     }, 3_000);
 
     return () => window.clearTimeout(resetConfirmation);
-  }, [receipt.isSuccess]);
+  }, [receiptState.kind]);
 
   const simulationMessage = simulation.error
     ? explainSimulationError(
@@ -739,14 +758,17 @@ export default function BuilderPage() {
           </div>
 
           {flowError && <p className="flow-error">{flowError}</p>}
-          {receipt.isSuccess ? (
-            <a className="primary-action confirmed" href={`https://monadscan.com/tx/${transactionHash}`} target="_blank" rel="noreferrer">
-              <Check size={18} /> Confirmed on Monad <ExternalLink size={15} />
-            </a>
-          ) : transactionHash ? (
-            <a className="primary-action pending" href={`https://monadscan.com/tx/${transactionHash}`} target="_blank" rel="noreferrer">
-              <LoaderCircle className="spin" size={18} /> Pending confirmation <ExternalLink size={15} />
-            </a>
+          {receiptState.kind !== "idle" ? (
+            <ComboActionStatus
+              state={receiptState}
+              onRetry={() => void receipt.refetch()}
+              onDismiss={() => {
+                comboWrite.reset();
+                setFlowError(
+                  "The last combo was never confirmed. Check it in the explorer before sending another.",
+                );
+              }}
+            />
           ) : !isConnected ? (
             <button
               className="primary-action"

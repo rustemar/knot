@@ -405,6 +405,34 @@ select { padding: 0 9px; font-size: 10px; }
 .primary-action:disabled { cursor: not-allowed; background: #272a27; color: #757a73; }
 .primary-action.pending { background: #fff0ba; }
 .primary-action.confirmed { background: var(--acid); }
+.primary-action.unknown { background: #ffad89; }
+.receipt-unknown { display: flex; flex-direction: column; gap: 8px; }
+.receipt-unknown-note { color: #ffad89; font-size: 10px; line-height: 1.45; }
+.receipt-unknown-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.receipt-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* Holds its width across "Check again" and "Checking again" so the button
+     beside it does not jump on every retry. */
+  min-width: 124px;
+  padding: 6px 12px;
+  border: 1px solid #ffad89;
+  border-radius: 8px;
+  background: transparent;
+  color: #ffad89;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.receipt-action:hover:not([aria-disabled="true"]) { background: rgba(255, 173, 137, 0.12); }
+.receipt-action:focus-visible { outline: 2px solid #ffad89; outline-offset: 2px; }
+/* Explicit colors, not opacity: 11px text faded over the panel drops under the
+   contrast floor. */
+.receipt-action[aria-disabled="true"] { cursor: not-allowed; border-color: #3a3f38; color: #9aa094; }
+.receipt-action.quiet { min-width: 0; border-color: #3a3f38; color: #9aa094; }
+.receipt-action.quiet:hover:not([aria-disabled="true"]) { background: rgba(154, 160, 148, 0.1); }
 .approval-copy { margin: 9px 0 0; color: #787d76; text-align: center; font-size: 9px; }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
